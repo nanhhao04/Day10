@@ -9,17 +9,17 @@
 
 | Chỉ số | Trước | Sau | Ghi chú |
 |--------|-------|-----|---------|
-| raw_records | | | |
-| cleaned_records | | | |
-| quarantine_records | | | |
-| Expectation halt? | | | |
+| raw_records |10 |13 | |
+| cleaned_records |6 | 6| |
+| quarantine_records |4 | 4| |
+| Expectation halt? |Fail 1 ở refund_no_stale_14d_window |Fail 1 ở refund_no_stale_14d_window | |
 
 ---
 
 ## 2. Before / after retrieval (bắt buộc)
 
 > Đính kèm hoặc dẫn link tới `artifacts/eval/before_after_eval.csv` (hoặc 2 file before/after).
-
+artifacts/eval/before.csv và artifacts/eval/after.csv
 **Câu hỏi then chốt:** refund window (`q_refund_window`)  
 **Trước:** (copy dòng CSV hoặc paste top-k)  
 **Sau:**
