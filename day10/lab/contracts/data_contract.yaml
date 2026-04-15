@@ -1,46 +1,72 @@
-# Data contract — Lab Day 10 (tiếp nối artifact CS + IT Helpdesk)
-# Sinh viên bổ sung owner, SLA freshness, và nguồn canonical.
-
-version: "1.0"
+version: "1.1"
 dataset: "kb_chunk_export"
 owner_team: "AI Platform - Data Engineering"
+data_quality_owner: "AI Platform Team"
 
+# 1. Định nghĩa Schema Cleaned
 schema_cleaned:
   chunk_id:
     type: string
     required: true
-    description: "ID ổn định sau clean (thường hash hoặc doc_id + seq)"
+    description: "Hash of (doc_id + content) or doc_id + sequence"
   doc_id:
     type: string
     required: true
-    description: "Khóa logic tài liệu nguồn (vd policy_refund_v4)"
+    description: "Logical key for source document"
   chunk_text:
     type: string
     required: true
     constraints:
       min_length: 8
+    description: "Cleaned text content"
   effective_date:
     type: date
     required: true
+    format: "YYYY-MM-DD"
   exported_at:
     type: datetime
     required: true
+    format: "ISO8601"
 
+# 2. Quy tắc chất lượng dữ liệu (Quality Rules)
 quality_rules:
-  - id: "no_duplicate_chunk_text"
-    severity: "warn"
-  - id: "no_stale_refund_window"
-    description: "Không được để chunk policy refund chứa cửa sổ 14 ngày (lệch so với v4 = 7 ngày)"
-    severity: "halt"
+  # Quy tắc DROP: Loại bỏ hoàn toàn bản ghi trùng lặp
+  - id: "drop_duplicate_chunk_text"
+    description: "Chỉ giữ lại bản ghi đầu tiên nếu nội dung chunk_text trùng lặp"
+    action: "drop"
+    field: "chunk_text"
 
+  # Quy tắc HALT: Dừng pipeline hoặc cách ly nếu sai logic nghiêm trọng
+  - id: "no_stale_refund_window"
+    description: "Phát hiện chunk refund chứa thông tin cũ '14 ngày'. Cần auto-fix sang '7 ngày'."
+    severity: "halt"
+    target_doc: "policy_refund_v4"
+    logic: "contains('14 ngày làm việc') -> transform('7 ngày làm việc')"
+
+  - id: "hr_policy_freshness_cutoff"
+    description: "Chỉ chấp nhận chính sách nhân sự có ngày hiệu lực từ 2026-01-01"
+    severity: "quarantine"
+    field: "effective_date"
+    condition: ">= 2026-01-01"
+
+  - id: "enforce_allowed_doc_ids"
+    description: "Chặn các doc_id không nằm trong danh sách allowlist"
+    severity: "quarantine"
+    field: "doc_id"
+    allowlist_ref: "allowed_doc_ids"
+
+# 3. Quản lý Freshness & Alerts
 freshness:
-  measured_at: "publish"  # ingest | cleaned | publish
+  measured_at: "publish"
   sla_hours: 24
   alert_channel: "#alerts-data-quality"
+  failure_mode_metric: "quarantine_count > 0"
 
+# 4. Nguồn tài liệu Canonical (Source of Truth)
 canonical_sources:
   - path: "data/docs/policy_refund_v4.txt"
     doc_id: "policy_refund_v4"
+    version: "4.0"
   - path: "data/docs/sla_p1_2026.txt"
     doc_id: "sla_p1_2026"
   - path: "data/docs/it_helpdesk_faq.txt"
@@ -48,13 +74,13 @@ canonical_sources:
   - path: "data/docs/hr_leave_policy.txt"
     doc_id: "hr_leave_policy"
 
-# Baseline allowlist export — nhóm mở rộng doc mới phải đồng bộ cleaning_rules + contract.
+# 5. Cấu hình Versioning & Allowlist
 allowed_doc_ids:
   - policy_refund_v4
   - sla_p1_2026
   - it_helpdesk_faq
   - hr_leave_policy
 
-# Merit/Distinction: có thể đưa cutoff versioning vào env và tham chiếu ở đây (tránh hard-code trong code).
-policy_versioning:
+env_vars:
   hr_leave_min_effective_date: "2026-01-01"
+  quarantine_path: "artifacts/quarantine/"

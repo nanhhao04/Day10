@@ -27,14 +27,28 @@
 
 ## 3. Quy tắc quarantine vs drop
 
-- **Quarantine**: Mọi bản ghi không vượt qua baseline rules (unknown doc_id, sai format ngày, stale HR policy) sẽ được đẩy vào `artifacts/quarantine/`.
-- **Drop**: Các bản ghi trùng lặp nội dung (`duplicate_chunk_text`) sẽ bị loại bỏ hoàn toàn, chỉ giữ lại bản ghi đầu tiên được tìm thấy.
-- **Approval**: Data Quality Owner (AI Platform Team) sẽ review file quarantine định kỳ. Bản ghi chỉ được merge lại sau khi nguồn dữ liệu gốc được sửa chữa hoặc rules được cập nhật.
+3.1. Drop Rules (Loại bỏ)
+drop_duplicate_chunk_text: Nếu phát hiện trùng lặp nội dung hoàn toàn (chunk_text), pipeline chỉ giữ lại bản ghi đầu tiên và loại bỏ các bản ghi sau.
+
+3.2. Quarantine Rules (Cách ly để Review)
+Các bản ghi sau sẽ được đẩy vào artifacts/quarantine/ và không được đưa vào production:
+
+unknown_doc_id: doc_id không nằm trong danh sách Allowlist (ví dụ: legacy_catalog_xyz).
+
+hr_policy_freshness_cutoff: Các tài liệu HR (hr_leave_policy) có effective_date trước ngày 2026-01-01.
+
+invalid_format: Sai định dạng ngày hoặc thiếu các trường bắt buộc (missing_effective_date).
+
+3.3. Auto-fix Logic (Halt/Transform)
+no_stale_refund_window: Nếu doc_id là policy_refund_v4 và nội dung chứa "14 ngày làm việc", pipeline phải tự động chuyển đổi (transform) thành "7 ngày làm việc" để đồng bộ với phiên bản mới nhất.
 
 ---
 
 ## 4. Phiên bản & canonical
 
-- **Source of truth cho policy refund**: Tài liệu `data/docs/policy_refund_v4.txt`. Mọi chunk có nội dung "14 ngày làm việc" sẽ bị tự động sửa thành "7 ngày làm việc" trong pipeline.
-- **HR Policy**: Chỉ chấp nhận các phiên bản có `effective_date` từ `2026-01-01` trở về sau.
-- **IT Helpdesk**: Dựa trên `it_helpdesk_faq.txt` là bản mới nhất năm 2026.
+| Doc ID | Path tài liệu gốc | Version |
+|--------|------------------|----------|
+| policy_refund_v4 | data/docs/policy_refund_v4.txt | 4.0 |
+| it_helpdesk_faq | data/docs/it_helpdesk_faq.txt | 2026 |
+| hr_leave_policy | data/docs/hr_leave_policy.txt | >= 2026 |
+| sla_p1_2026 | data/docs/sla_p1_2026.txt | 2026 |
