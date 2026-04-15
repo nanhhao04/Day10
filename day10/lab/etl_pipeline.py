@@ -17,6 +17,7 @@ Chế độ inject (Sprint 3 — bỏ fix refund để expectation fail / eval x
 from __future__ import annotations
 
 import argparse
+import collections
 import json
 import os
 import sys
@@ -79,6 +80,14 @@ def cmd_run(args: argparse.Namespace) -> int:
     log(f"quarantine_records={len(quarantine)}")
     log(f"cleaned_csv={cleaned_path.relative_to(ROOT)}")
     log(f"quarantine_csv={quar_path.relative_to(ROOT)}")
+    
+    # lê ngoc hải: Log impact metrics - track which quarantine reasons affected data quality
+    quar_reasons = [q.get("reason", "unknown") for q in quarantine]
+    reason_counts = collections.Counter(quar_reasons)
+    log("_impact_metrics_quarantine_breakdown:")
+    for reason, count in sorted(reason_counts.items(), key=lambda x: -x[1]):
+        log(f"  {reason}={count}")
+    log(f"_impact_metrics_quality_ratio:cleaned_to_raw={(len(cleaned) * 100 // raw_count)}%")
 
     results, halt = run_expectations(cleaned)
     for r in results:
@@ -116,6 +125,11 @@ def cmd_run(args: argparse.Namespace) -> int:
         "cleaned_csv": str(cleaned_path.relative_to(ROOT)),
         "chroma_path": os.environ.get("CHROMA_DB_PATH", "./chroma_db"),
         "chroma_collection": os.environ.get("CHROMA_COLLECTION", "day10_kb"),
+        # lê ngoc hải: Add impact metrics to manifest for tracking quality improvements
+        "_impact_metrics": {
+            "quality_pass_rate": round(len(cleaned) * 100 / raw_count, 1) if raw_count > 0 else 0,
+            "quarantine_breakdown": dict(collections.Counter([q.get("reason", "unknown") for q in quarantine])),
+        }
     }
     man_path = MAN_DIR / f"manifest_{run_id.replace(':', '-')}.json"
     man_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -152,7 +166,13 @@ def cmd_embed_internal(cleaned_csv: Path, *, run_id: str, log) -> bool:
     col = client.get_or_create_collection(name=collection_name, embedding_function=emb)
 
     ids = [r["chunk_id"] for r in rows]
-    # Tránh “mồi cũ” trong top-k: xóa id không còn trong cleaned run này (index = snapshot publish).
+    # lê ngoc hải: Check for duplicate chunk_ids within same run (before embedding)
+    duplicate_ids = [cid for cid in ids if ids.count(cid) > 1]
+    if duplicate_ids:
+        unique_dupes = set(duplicate_ids)
+        log(f"WARN: embed_duplicate_chunk_ids_found={len(unique_dupes)} ids={sorted(unique_dupes)}")
+    
+    # Tránh "mồi cũ" trong top-k: xóa id không còn trong cleaned run này (index = snapshot publish).
     try:
         prev = col.get(include=[])
         prev_ids = set(prev.get("ids") or [])
@@ -174,6 +194,28 @@ def cmd_embed_internal(cleaned_csv: Path, *, run_id: str, log) -> bool:
     # Idempotent: upsert theo chunk_id
     col.upsert(ids=ids, documents=documents, metadatas=metadatas)
     log(f"embed_upsert count={len(ids)} collection={collection_name}")
+    
+    # lê ngoc hải: Validate no duplicate embeddings in collection (check by normalized text)
+    try:
+        all_items = col.get(include=["documents", "metadatas"])
+        texts = all_items.get("documents") or []
+        # Normalize texts to detect semantic duplicates
+        from transform.cleaning_rules import _norm_text
+        text_key_map = {}
+        duplicates_found = []
+        for i, text in enumerate(texts):
+            key = _norm_text(text)
+            if key in text_key_map:
+                duplicates_found.append((text_key_map[key], i, key))
+            else:
+                text_key_map[key] = i
+        if duplicates_found:
+            log(f"WARN: embed_semantic_duplicates_detected={len(duplicates_found)}")
+            for pos1, pos2, key in duplicates_found[:3]:  # Log first 3
+                log(f"  duplicate_positions=[{pos1},{pos2}]")
+    except Exception as e:
+        log(f"WARN: embed_duplicate_validation_skip: {e}")
+    
     return True
 
 
