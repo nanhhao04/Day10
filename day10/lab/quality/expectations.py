@@ -112,5 +112,64 @@ def run_expectations(cleaned_rows: List[Dict[str, Any]]) -> Tuple[List[Expectati
         )
     )
 
+    # E7: không còn chunk nào chứa BOM hoặc null byte sau clean
+    # metric_impact: nếu cleaning_rules rule 7 hoạt động đúng, expectation này luôn PASS;
+    # inject BOM vào raw CSV → rule 7 quarantine → E7 vẫn PASS (bằng chứng rule hoạt động).
+    # Nếu rule 7 bị tắt/bypass → E7 FAIL → halt pipeline.
+    bad_hidden = [
+        r
+        for r in cleaned_rows
+        if "\ufeff" in (r.get("chunk_text") or "") or "\x00" in (r.get("chunk_text") or "")
+    ]
+    ok7 = len(bad_hidden) == 0
+    results.append(
+        ExpectationResult(
+            "no_hidden_chars_in_chunk_text",
+            ok7,
+            "halt",
+            f"hidden_char_violations={len(bad_hidden)}",
+        )
+    )
+
+    # E8: chunk_text tối thiểu 20 ký tự (sau clean, không được quá ngắn)
+    # metric_impact: nếu rule 8 hoạt động đúng, expectation này luôn PASS;
+    # inject dòng "OK" → rule 8 quarantine → E8 vẫn PASS (bằng chứng).
+    # Nếu rule 8 bị bypass → E8 FAIL → warn pipeline (không halt để tránh block valid data).
+    too_short = [r for r in cleaned_rows if len((r.get("chunk_text") or "").strip()) < 20]
+    ok8 = len(too_short) == 0
+    results.append(
+        ExpectationResult(
+            "chunk_min_length_20",
+            ok8,
+            "warn",
+            f"short_chunks_under_20={len(too_short)}",
+        )
+    )
+
+    # E9: không còn chunk sla_p1_2026 nào mô tả SLA phản hồi > 60 phút sau clean
+    # metric_impact: nếu rule 9 hoạt động đúng, expectation này luôn PASS;
+    # inject dòng "120 phút" → rule 9 quarantine → E9 vẫn PASS (bằng chứng rule hoạt động).
+    # Nếu rule 9 bị tắt/bypass → dòng "120 phút" lọt vào cleaned → E9 FAIL → halt pipeline.
+    _sla_minutes = re.compile(r"(\d+)\s*phút", re.IGNORECASE)
+    _sla_max = 60
+    bad_sla_response = [
+        r
+        for r in cleaned_rows
+        if r.get("doc_id") == "sla_p1_2026"
+        and any(
+            int(m) > _sla_max
+            for m in _sla_minutes.findall(r.get("chunk_text") or "")
+        )
+    ]
+    ok9 = len(bad_sla_response) == 0
+    results.append(
+        ExpectationResult(
+            "sla_p1_no_response_over_60_min",
+            ok9,
+            "halt",
+            f"sla_violations={len(bad_sla_response)}",
+        )
+    )
+
     halt = any(not r.passed and r.severity == "halt" for r in results)
     return results, halt
